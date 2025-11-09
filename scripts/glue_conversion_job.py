@@ -1,81 +1,152 @@
 import sys
-from awsglue.transforms import *
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
+from pyspark.sql.types import StructType, StructField, StringType, LongType, IntegerType, DecimalType, DateType
 
 # --- 必备：获取作业参数 ---
 args = getResolvedOptions(sys.argv, [
     'JOB_NAME',
-    'source_sf_prefix',
-    'target_s3_folder'
+    'scale_factor',       # e.g., "10", "30", "100"
+    'target_s3_folder'    # e.g., "tpch_0" (您要写入的目标文件夹)
 ])
 
-# --- 初始化上下文 ---
+# --- 1. 定义 TPC-H 完整架构 ---
+schemas = {
+    "customer": StructType([
+        StructField("c_custkey", LongType(), True),
+        StructField("c_name", StringType(), True),
+        StructField("c_address", StringType(), True),
+        StructField("c_nationkey", LongType(), True),
+        StructField("c_phone", StringType(), True),
+        StructField("c_acctbal", DecimalType(12, 2), True),
+        StructField("c_mktsegment", StringType(), True),
+        StructField("c_comment", StringType(), True)
+    ]),
+    "lineitem": StructType([
+        StructField("l_orderkey", LongType(), True),
+        StructField("l_partkey", LongType(), True),
+        StructField("l_suppkey", LongType(), True),
+        StructField("l_linenumber", IntegerType(), True),
+        StructField("l_quantity", DecimalType(12, 2), True),
+        StructField("l_extendedprice", DecimalType(12, 2), True),
+        StructField("l_discount", DecimalType(12, 2), True),
+        StructField("l_tax", DecimalType(12, 2), True),
+        StructField("l_returnflag", StringType(), True),
+        StructField("l_linestatus", StringType(), True),
+        StructField("l_shipdate", DateType(), True),
+        StructField("l_commitdate", DateType(), True),
+        StructField("l_receiptdate", DateType(), True),
+        StructField("l_shipinstruct", StringType(), True),
+        StructField("l_shipmode", StringType(), True),
+        StructField("l_comment", StringType(), True)
+    ]),
+    "nation": StructType([
+        StructField("n_nationkey", LongType(), True),
+        StructField("n_name", StringType(), True),
+        StructField("n_regionkey", LongType(), True),
+        StructField("n_comment", StringType(), True)
+    ]),
+    "orders": StructType([
+        StructField("o_orderkey", LongType(), True),
+        StructField("o_custkey", LongType(), True),
+        StructField("o_orderstatus", StringType(), True),
+        StructField("o_totalprice", DecimalType(12, 2), True),
+        StructField("o_orderdate", DateType(), True),
+        StructField("o_orderpriority", StringType(), True),
+        StructField("o_clerk", StringType(), True),
+        StructField("o_shippriority", IntegerType(), True),
+        StructField("o_comment", StringType(), True)
+    ]),
+    "part": StructType([
+        StructField("p_partkey", LongType(), True),
+        StructField("p_name", StringType(), True),
+        StructField("p_mfgr", StringType(), True),
+        StructField("p_brand", StringType(), True),
+        StructField("p_type", StringType(), True),
+        StructField("p_size", IntegerType(), True),
+        StructField("p_container", StringType(), True),
+        StructField("p_retailprice", DecimalType(12, 2), True),
+        StructField("p_comment", StringType(), True)
+    ]),
+    "partsupp": StructType([
+        StructField("ps_partkey", LongType(), True),
+        StructField("ps_suppkey", LongType(), True),
+        StructField("ps_availqty", IntegerType(), True),
+        StructField("ps_supplycost", DecimalType(12, 2), True),
+        StructField("ps_comment", StringType(), True)
+    ]),
+    "region": StructType([
+        StructField("r_regionkey", LongType(), True),
+        StructField("r_name", StringType(), True),
+        StructField("r_comment", StringType(), True)
+    ]),
+    "supplier": StructType([
+        StructField("s_suppkey", LongType(), True),
+        StructField("s_name", StringType(), True),
+        StructField("s_address", StringType(), True),
+        StructField("s_nationkey", LongType(), True),
+        StructField("s_phone", StringType(), True),
+        StructField("s_acctbal", DecimalType(12, 2), True),
+        StructField("s_comment", StringType(), True)
+    ])
+}
+
+# --- 2. 初始化上下文 ---
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
-# --- 1. 定义参数 ---
-source_database = "tpch_raw_staging"
-source_sf_prefix = args['source_sf_prefix']
+# --- 3. 定义参数 ---
+scale_factor = args['scale_factor']
 target_s3_folder = args['target_s3_folder']
 athena_base_path = "s3://home-dongyang/athena/"
+raw_data_base_path = "s3://home-dongyang/staging-tpch-raw/"
+sf = int(scale_factor)
 
-# TPC-H 的 8 个标准表
-tables_to_convert = [
-    'customer',
-    'lineitem',
-    'nation',
-    'orders',
-    'part',
-    'partsupp',
-    'region',
-    'supplier'
-]
+print(f"--- 开始转换作业 (V4 - 修复日期类型) ---")
+print(f"--- 读取源: {raw_data_base_path}sf-{scale_factor}/")
+print(f"--- 写入目标: {athena_base_path}{target_s3_folder}/ (SF={sf}) ---")
 
-print(f"--- 开始转换作业 ---")
-print(f"--- 读取源: {source_database} (表前缀: {source_sf_prefix})")
-print(f"--- 写入目标: {athena_base_path}{target_s3_folder}/ ---")
+# --- 4. 循环处理每个表 ---
+for table_name, schema in schemas.items():
 
-# --- 2. 循环处理每个表 ---
-for table_name in tables_to_convert:
+    s3_input_path = f"{raw_data_base_path}sf-{sf}/{table_name}.tbl"
+    s3_output_path = f"{athena_base_path}{target_s3_folder}/{table_name}/"
 
-    # 爬网程序会根据 S3 路径自动命名表
-    # e.g., s3://.../staging-tpch-raw/sf-10/ -> "sf_10_customer", "sf_10_lineitem"
-    catalog_table_name = f"{source_sf_prefix}_{table_name}_tbl"
+    print(f"正在处理表: {table_name}")
 
-    # 最终输出的 S3 路径
-    # e.g., s3://home-dongyang/athena/tpch_0/customer/
-    output_path = f"{athena_base_path}{target_s3_folder}/{table_name}/"
+    input_dataframe = spark.read \
+        .format("csv") \
+        .schema(schema) \
+        .option("sep", "|") \
+        .option("dateFormat", "yyyy-MM-dd") \
+        .load(s3_input_path)
 
-    print(f"正在处理表: {catalog_table_name} -> {output_path}")
+    # --- 5. 动态重新分区 (解决小文件问题) ---
+    num_partitions = 1
 
-    # 1. 从 Glue 目录读取原始数据
-    input_dynamic_frame = glueContext.create_dynamic_frame.from_catalog(
-        database = source_database,
-        table_name = catalog_table_name,
-        transformation_ctx = f"input_{table_name}"
-    )
+    if table_name in ['nation', 'region']:
+        num_partitions = 1
+    elif table_name in ['supplier', 'part']:
+        num_partitions = max(1, int(sf / 10))
+    elif table_name in ['customer', 'partsupp']:
+        num_partitions = max(1, int(sf / 5))
+    elif table_name in ['orders', 'lineitem']:
+        num_partitions = max(1, int(sf * 2))
 
-    # 2. 转换为 Parquet 并写入 S3
-    glueContext.write_dynamic_frame.from_options(
-        frame = input_dynamic_frame,
-        connection_type = "s3",
-        connection_options = {
-            "path": output_path
-        },
-        format = "parquet",
-        format_options = {
-            # --- 这是满足您要求的关键 ---
-            "compression": "none"
-            # -------------------------------
-        },
-        transformation_ctx = f"output_{table_name}"
-    )
+    print(f"-> 重新分区为 {num_partitions} 个文件...")
+    final_dataframe = input_dataframe.repartition(num_partitions)
+
+    # 6. 将 Spark DataFrame 写入 Parquet
+    final_dataframe.write \
+        .format("parquet") \
+        .option("compression", "none") \
+        .mode("overwrite") \
+        .save(s3_output_path)
 
     print(f"完成: {table_name}")
 
