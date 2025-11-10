@@ -5,14 +5,16 @@ from awsglue.context import GlueContext
 from awsglue.job import Job
 from pyspark.sql.types import StructType, StructField, StringType, LongType, IntegerType, DecimalType, DateType
 
-# --- 必备：获取作业参数 ---
+# --- Required: Get Job Parameters ---
 args = getResolvedOptions(sys.argv, [
     'JOB_NAME',
     'scale_factor',       # e.g., "10", "30", "100"
-    'target_s3_folder'    # e.g., "tpch_0" (您要写入的目标文件夹)
+    'target_s3_folder'    # e.g., "tpch_0" (The target folder you want to write to)
+    'raw_data_base_path', # e.g., "s3://your-bucket/staging-tpch-raw/"
+    'athena_base_path'    # e.g., "s3://your-bucket/athena/"
 ])
 
-# --- 1. 定义 TPC-H 完整架构 ---
+# --- 1. Define TPC-H Full Schemas ---
 schemas = {
     "customer": StructType([
         StructField("c_custkey", LongType(), True),
@@ -93,31 +95,37 @@ schemas = {
     ])
 }
 
-# --- 2. 初始化上下文 ---
+# --- 2. Initialize Contexts ---
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
-# --- 3. 定义参数 ---
+# --- 3. Define Parameters ---
 scale_factor = args['scale_factor']
-target_s3_folder = args['target_s3_folder']
-athena_base_path = "s3://home-dongyang/athena/"
-raw_data_base_path = "s3://home-dongyang/staging-tpch-raw/"
 sf = int(scale_factor)
 
-print(f"--- 开始转换作业 (V4 - 修复日期类型) ---")
-print(f"--- 读取源: {raw_data_base_path}sf-{scale_factor}/")
-print(f"--- 写入目标: {athena_base_path}{target_s3_folder}/ (SF={sf}) ---")
+target_s3_folder = args['target_s3_folder']
 
-# --- 4. 循环处理每个表 ---
+raw_data_base_path = args['raw_data_base_path']
+athena_base_path = args['athena_base_path']
+if not athena_base_path.endswith('/'):
+    athena_base_path += '/'
+if not raw_data_base_path.endswith('/'):
+    raw_data_base_path += '/'
+
+print(f"--- Starting conversion job (V4 - Fixed date types) ---")
+print(f"--- Reading source: {raw_data_base_path}sf-{scale_factor}/")
+print(f"--- Writing target: {athena_base_path}{target_s3_folder}/ (SF={sf}) ---")
+
+# --- 4. Loop Processing for Each Table ---
 for table_name, schema in schemas.items():
 
     s3_input_path = f"{raw_data_base_path}sf-{sf}/{table_name}.tbl"
     s3_output_path = f"{athena_base_path}{target_s3_folder}/{table_name}/"
 
-    print(f"正在处理表: {table_name}")
+    print(f"Processing table: {table_name}")
 
     input_dataframe = spark.read \
         .format("csv") \
@@ -126,7 +134,7 @@ for table_name, schema in schemas.items():
         .option("dateFormat", "yyyy-MM-dd") \
         .load(s3_input_path)
 
-    # --- 5. 动态重新分区 (解决小文件问题) ---
+    # --- 5. Dynamic Repartitioning (to solve small files problem) ---
     num_partitions = 1
 
     if table_name in ['nation', 'region']:
@@ -138,18 +146,18 @@ for table_name, schema in schemas.items():
     elif table_name in ['orders', 'lineitem']:
         num_partitions = max(1, int(sf * 2))
 
-    print(f"-> 重新分区为 {num_partitions} 个文件...")
+    print(f"-> Repartitioning to {num_partitions} files...")
     final_dataframe = input_dataframe.repartition(num_partitions)
 
-    # 6. 将 Spark DataFrame 写入 Parquet
+    # 6. Write Spark DataFrame to Parquet
     final_dataframe.write \
         .format("parquet") \
         .option("compression", "none") \
         .mode("overwrite") \
         .save(s3_output_path)
 
-    print(f"完成: {table_name}")
+    print(f"Completed: {table_name}")
 
-# --- 作业完成 ---
+# --- Job Complete ---
 job.commit()
-print(f"--- 作业 {args['JOB_NAME']} 已成功完成 ---")
+print(f"--- Job {args['JOB_NAME']} has completed successfully ---")
