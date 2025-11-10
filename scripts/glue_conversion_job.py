@@ -135,16 +135,19 @@ for table_name, schema in schemas.items():
         .load(s3_input_path)
 
     # --- 5. Dynamic Repartitioning (to solve small files problem) ---
-    num_partitions = 1
-
-    if table_name in ['nation', 'region']:
-        num_partitions = 1
-    elif table_name in ['supplier', 'part']:
-        num_partitions = max(1, int(sf / 10))
-    elif table_name in ['customer', 'partsupp']:
-        num_partitions = max(1, int(sf / 5))
-    elif table_name in ['orders', 'lineitem']:
-        num_partitions = max(1, int(sf * 2))
+    TARGET_FILE_SIZE_MB = 50
+    table_gb_per_sf = {
+        'lineitem': 0.393,
+        'orders': 0.113,
+        'partsupp': 0.113,
+        'customer': 0.023,
+        'part': 0.013,
+        'supplier': 0.0015,
+        'nation': 0.000001,
+        'region': 0.000001
+    }
+    estimated_size_mb = (table_gb_per_sf.get(table_name, 0.01)) * sf * 1000
+    num_partitions = max(1, int(round(estimated_size_mb / TARGET_FILE_SIZE_MB)))
 
     print(f"-> Repartitioning to {num_partitions} files...")
     final_dataframe = input_dataframe.repartition(num_partitions)
