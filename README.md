@@ -47,7 +47,7 @@ In the Job parameters section, provide the following arguments:
     * `athena_base_path`: `s3://your-bucket-name/athena-data/`
 7. Run the job for each scale factor.
 
-## 3. Create Glue Database & Crawler
+### 3. Create Glue Database & Crawler
 Catalog the Parquet data, making it discoverable by Athena.
 
 1. In the AWS Glue console, Navigate to **Crawlers** and click **Add crawler**.
@@ -64,3 +64,34 @@ Catalog the Parquet data, making it discoverable by Athena.
     * **Create a single schema for each S3 path:** `UnChecked` 
 4. Run the crawler. When it completes, your `tpch_db_0` database will be populated with the 8 TPC-H tables.
 5. Repeat this process to create crawlers and databases for your other datasets.
+
+## Part 2: TPC-H Benchmark Tool
+This is a lightweight, Java-based benchmark tool designed to test AWS Athena by replaying a trace file to simulate a real-world workload. 
+It strictly adheres to the timestamp offsets defined in the file, submitting queries and recording detailed performance metrics (wait time, execution time) and estimated costs.
+
+### Configuration
+All benchmark settings are managed in `src/main/resources/config.properties`.
+
+|                  Property                   |                                Description                                 |                                         Example                                          |
+|:-------------------------------------------:|:--------------------------------------------------------------------------:|:----------------------------------------------------------------------------------------:|
+|                `aws.region`                 |                    Your AWS region. Must be lowercase.                     |                                       `us-east-2`                                        |
+|          `athena.output.s3.bucket`          |                 The S3 path to store Athena query results.                 |                           `s3://home-dongyang/athena-results/`                           |
+|           `athena.dollars.per.tb`           |            The billing price (in USD) per TB scanned by Athena.            |                                          `5.0`                                           |
+|              `query.file.path`              |                Local file path to the workload trace file.                 |                  `/home/gengdy/athena-experiment/workload/queries.txt`                   |
+|             `results.file.path`             |              Local file path to store the benchmark results.               |                   `/home/gengdy/athena-experiment/workload/result.txt`                   |
+
+### Input Format (Workload File)
+
+The workload file specified by `query.file.path` must be a plain text file.
+Each line represents a single query and must contain four columns, separated by a comma (,).
+
+**Format：** `timestamp,database_name,query_id,query_string`
+* `timestamp`: (Long) The query submission timestamp in milliseconds. This is a relative time from the start of the test.
+* `database_name`: (String) The Athena database name to run the query against (e.g., tpch_db_0).
+* `query_id`: (Integer) A unique identifier for the query (used for tracking and output).
+* `query_string`: (String) The SQL query to execute. This is the fourth and final column; it may contain its own commas.
+
+### Analyze Results
+After running the benchmark, the results file specified by `results.file.path` will contain detailed metrics
+
+You can run `scripts/analyze.py` to parse the results file and generate a summary report.
