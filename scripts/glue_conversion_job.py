@@ -9,7 +9,7 @@ from pyspark.sql.types import StructType, StructField, StringType, LongType, Int
 args = getResolvedOptions(sys.argv, [
     'JOB_NAME',
     'scale_factor',       # e.g., "10", "30", "100"
-    'target_s3_folder'    # e.g., "tpch_0" (The target folder you want to write to)
+    'target_s3_folder',   # e.g., "tpch_0" (The target folder you want to write to)
     'raw_data_base_path', # e.g., "s3://your-bucket/staging-tpch-raw/"
     'athena_base_path'    # e.g., "s3://your-bucket/athena/"
 ])
