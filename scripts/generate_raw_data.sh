@@ -1,154 +1,97 @@
-#!/bin/bash
-
-# *****************************************************
-# Optimized TPC-H Raw Data Generation Script
-#
-# This script is used on an EC2 instance to:
-# 1. Check for dependencies (aws-cli, pv).
-# 2. Compile the TPC-H data generator (dbgen).
-# 3. Generate raw .tbl (pipe-delimited) files for multiple scale factors.
-# 4. Stream the output of dbgen directly to an S3 staging bucket
-#    in parallel (8 tables at a time per scale factor) to save disk space
-#    and improve speed.
-# 5. Display progress for each table upload using 'pv'.
-#
+#!/usr/bin/env bash
+# Minimal TPC-H generator: stream each .tbl directly to S3 with dbgen progress.
 # Usage:
-# ./generate_raw_data.sh <s3_staging_bucket_path>
+#   ./tpch_to_s3.sh <SCALE_FACTOR> <S3_PREFIX>
 # Example:
-# ./generate_raw_data.sh s3://my-bucket/staging-tpch-raw
+#   ./tpch_to_s3.sh 10 s3://my-bucket/tpch/sf-10/
 #
-# Prerequisites:
-# - git, make, gcc (for compiling dbgen)
-# - aws-cli (for S3 upload)
-# - pv (for progress monitoring)
-#   (Install on Ubuntu/Debian: sudo apt update && sudo apt install -y pv)
-#   (Install on RHEL/CentOS/Amazon Linux: sudo yum install -y pv)
-# *****************************************************
+# Requirements:
+#   - gcc, make, git
+#   - AWS CLI v2 configured (aws s3 cp)
+#   - network access to clone electrum/tpch-dbgen
+#
+# Notes:
+#   - No local .tbl files are created; each table is streamed via a FIFO.
+#   - dbgen progress is shown with -v (verbose).
+#   - Tables are generated one-by-one using -T flags (see mapping below).
 
-set -e
-echo "--- Starting TPC-H raw data generation ---"
+set -euo pipefail
 
-# --- 1. Validate Input Argument & Dependencies ---
-
-# Check if the required argument (S3 path) is provided
-if [ -z "$1" ]; then
-    echo "Error: Missing required argument."
-    echo "Usage: $0 <s3_staging_bucket_path>"
-    echo "Example: $0 s3://my-staging-bucket/staging-tpch-raw"
-    exit 1
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 <SCALE_FACTOR> <S3_PREFIX>"
+  exit 1
 fi
 
-# The first argument is the S3 staging bucket path
-STAGING_BUCKET=$1
+SF="$1"
+S3_PREFIX="$2"
+S3_PREFIX="${S3_PREFIX%/}/"    # ensure trailing slash
 
-# Ensure S3 path has a trailing slash for correct path joining
-if [[ "${STAGING_BUCKET}" != */ ]]; then
-    STAGING_BUCKET="${STAGING_BUCKET}/"
+# Clone & build dbgen if needed
+if [[ ! -d tpch-dbgen ]]; then
+  echo "--- Cloning tpch-dbgen ---"
+  git clone https://github.com/electrum/tpch-dbgen.git
 fi
 
-# Check for required command-line tools
-command -v aws >/dev/null 2>&1 || { echo >&2 "Error: 'aws' CLI not found. Please install and configure it."; exit 1; }
-command -v pv >/dev/null 2>&1 || { echo >&2 "Error: 'pv' (Pipe Viewer) not found. Please install it (e.g., sudo apt install pv)."; exit 1; }
-command -v git >/dev/null 2>&1 || { echo >&2 "Error: 'git' not found. Please install it."; exit 1; }
-command -v make >/dev/null 2>&1 || { echo >&2 "Error: 'make' not found. Please install build-essential or equivalent."; exit 1; }
+echo "--- Building dbgen ---"
+pushd tpch-dbgen >/dev/null
+make
+popd >/dev/null
 
-# --- 2. Build TPC-H dbgen ---
-echo "--- Cloning and building TPC-H dbgen ---"
+# Temporary working dir for FIFOs; no .tbl persisted
+WORKDIR="$(mktemp -d)"
+cleanup() {
+  rm -rf "$WORKDIR"
+}
+trap cleanup EXIT
 
-# Clone only if the directory doesn't exist
-if [ ! -d "tpch-dbgen" ]; then
-    # You can change this URL if you have a different fork of dbgen
-    git clone https://github.com/electrum/tpch-dbgen.git
-    cd tpch-dbgen
-    # Note: TPC-H defaults to the C90 standard.
-    # If 'make' fails, you may need to modify the Makefile:
-    # CFLAGS = $(CDEF) -Wno-error=implicit-function-declaration
-    make
-    cd ..
-else
-    echo "tpch-dbgen directory already exists, skipping clone and build."
-fi
+DBGEN="./tpch-dbgen/dbgen"
 
-cd tpch-dbgen
+# Helper: stream a single table directly to S3 using a FIFO
+# Args: <table_letter> <table_filename>
+stream_table() {
+  local TLETTER="$1"
+  local FNAME="$2"             # e.g., customer.tbl
+  local FIFO_PATH="$WORKDIR/$FNAME"
+  local S3_URI="${S3_PREFIX}${FNAME}"
 
-# --- 3. Define Functions ---
+  echo "--- Generating ${FNAME} (SF=${SF}) -> ${S3_URI} ---"
 
-# This function generates a *single* table and streams it to S3.
-# It uses the -T flag for dbgen to specify which table to build.
-# Arguments:
-#   $1: Scale Factor (e.g., 10)
-#   $2: S3 folder name (e.g., sf-10)
-#   $3: Table character (dbgen flag, e.g., 'c' for customer)
-#   $4: Table name (e.g., 'customer')
-generate_table_and_upload() {
-    local SF=$1
-    local S3_FOLDER=$2
-    local TBL_CHAR=$3
-    local TBL_NAME=$4
-    local TARGET_S3_PATH="${STAGING_BUCKET}${S3_FOLDER}/${TBL_NAME}.tbl"
+  # Create FIFO that dbgen will write into (via DSS_PATH).
+  mkfifo "$FIFO_PATH"
 
-    echo "[SF-${SF}] Generating table: ${TBL_NAME} -> ${TARGET_S3_PATH}"
+  # Uploader consumes from the FIFO and writes to S3 (stdin is "-").
+  # Use a subshell to ensure proper job control and 'set -e' behavior.
+  ( set -euo pipefail; cat "$FIFO_PATH" | aws s3 cp - "$S3_URI" ) &
+  UP_PID=$!
 
-    # -s: Scale Factor
-    # -T: Generate a specific table
-    #     c: customer
-    #     L: lineitem (Note: Some dbgen versions use 'L', others 'l'. Check with './dbgen -h')
-    #     n: nation
-    #     o: orders
-    #     p: part
-    #     S: partsupp (Note: Uppercase 'S')
-    #     r: region
-    #     s: supplier (Note: Lowercase 's')
-    # -v: Verbose mode (sends progress to stderr, data to stdout)
+  # Point dbgen to write into WORKDIR and generate only this table.
+  # -s <SF>   : scale factor
+  # -T <char> : select single table
+  # -v        : show progress (dbgen prints progress to stderr)
+  # -f        : force without prompts
+  DSS_PATH="$WORKDIR" DSS_CONFIG="tpch-dbgen" \
+    "$DBGEN" -s "$SF" -T "$TLETTER" -v -f 2>&1
 
-    # We pipe the output (stdout) of dbgen directly to pv (for progress)
-    # and then pipe that to 'aws s3 cp' using '-' to read from stdin.
-    ./dbgen -s ${SF} -T ${TBL_CHAR} -v 2>&1 | \
-        grep -v 'CREATE TABLE' | \
-        pv -N "[SF-${SF}] ${TBL_NAME}" | \
-        aws s3 cp - "${TARGET_S3_PATH}"
-
-    echo "[SF-${SF}] Completed upload for: ${TBL_NAME}"
+  # Wait for upload to finish, then remove FIFO
+  wait "$UP_PID"
+  rm -f "$FIFO_PATH"
+  echo "--- Uploaded ${FNAME} ---"
 }
 
-# This function orchestrates the parallel generation for all 8 tables
-# for a single scale factor.
-# Argument 1 ($1): Scale Factor (e.g., 10)
-process_scale_factor() {
-    local SF=$1
-    local S3_FOLDER="sf-${SF}"
+# Table letter mapping for TPC-H dbgen (-T):
+#   c: customer      n: nation        r: region
+#   s: supplier      P: part          S: partsupp
+#   O: orders        L: lineitem
+# (There are combo flags like 'o' and 'p', but we use single-table flags.) :contentReference[oaicite:1]{index=1}
 
-    echo "=========================================================="
-    echo "--- Starting parallel data generation for SF=${SF}... ---"
-    echo "--- Target S3 location: ${STAGING_BUCKET}${S3_FOLDER}/ ---"
-    echo "=========================================================="
+# Recommended order (dims before facts):
+stream_table n nation.tbl
+stream_table r region.tbl
+stream_table c customer.tbl
+stream_table s supplier.tbl
+stream_table P part.tbl
+stream_table S partsupp.tbl
+stream_table O orders.tbl
+stream_table L lineitem.tbl
 
-    # Start all 8 table generation processes in the background
-    generate_table_and_upload $SF $S3_FOLDER c customer &
-    generate_table_and_upload $SF $S3_FOLDER o orders &
-    generate_table_and_upload $SF $S3_FOLDER L lineitem & # Using 'L' for lineitem
-    generate_table_and_upload $SF $S3_FOLDER p part &
-    generate_table_and_upload $SF $S3_FOLDER S partsupp & # Using 'S' for partsupp
-    generate_table_and_upload $SF $S3_FOLDER s supplier & # Using 's' for supplier
-    generate_table_and_upload $SF $S3_FOLDER n nation &
-    generate_table_and_upload $SF $S3_FOLDER r region &
-
-    # 'wait' ensures the script pauses until all background jobs are finished
-    echo "[SF-${SF}] Waiting for all 8 tables to complete generation and upload..."
-    wait
-    echo "[SF-${SF}] All tables for SF=${SF} have been uploaded."
-}
-
-# --- 4. Run for all scales ---
-# Run for all required scales 10G (SF-10), 30G (SF-30), and 100G (SF-100)
-# These will run sequentially (SF-10 must finish before SF-30 starts),
-# but within each SF, the 8 tables are generated/uploaded in parallel.
-
-process_scale_factor 10
-process_scale_factor 30
-process_scale_factor 100
-
-# Go back to the original directory
-cd ..
-
-echo "--- All TPC-H raw data has been generated and uploaded to ${STAGING_BUCKET} ---"
+echo "--- Done: TPC-H SF=${SF} streamed to ${S3_PREFIX} ---"
