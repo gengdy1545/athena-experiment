@@ -10,7 +10,7 @@ It includes:
 ## Part 1: TPC-H Data Setup Workflow
 
 ### 1. Generate TPC-H Raw Data
-Ensure you have `git`, `make`, `gcc`, and the `aws-cli` installed.
+Ensure you have `git`, `make`, `gcc`, `pv`, and the `aws-cli` installed.
 
 Run `scripts/generate_raw_data.sh` script, passing your S3 staging bucket path as the first argument. 
 The script will generate data for multiple scale factors (e.g., SF-10, SF-30, SF-100) and place them in corresponding subfolders.
