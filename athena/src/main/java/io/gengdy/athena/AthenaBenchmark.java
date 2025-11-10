@@ -18,11 +18,11 @@ public class AthenaBenchmark
 {
 	private static final String CONFIG_FILE_PATH = "config.properties";
 
-	private Region AWS_REGION = Region.US_EAST_2;
-	private String ATHENA_OUTPUT_S3_BUCKET = "s3://home-dongyang/athena-results/";
-	private String QUERY_FILE_PATH = "/home/gengdy/athena-experiment/workload/queries-mini.txt";
-	private String RESULTS_FILE_PATH = "/home/gengdy/athena-experiment/workload/result.txt";
-	private double DOLLARS_PER_TB = 5.0; // Athena per-TB pricing (in USD)
+	private Region AWS_REGION;
+	private String ATHENA_OUTPUT_S3_BUCKET;
+	private String QUERY_FILE_PATH;
+	private String RESULTS_FILE_PATH;
+	private double DOLLARS_PER_TB; // Athena per-TB pricing (in USD)
 
 	public static void main(String[] args)
 	{
