@@ -1,3 +1,5 @@
+TODO: The glue conversion script requires optimization. It should only require two parameters: the input and output paths.
+
 # TPC-H Data Experiment on AWS Athena
 This project provides a complete framework for setting up and running TPC-H benchmarks against Amazon Athena.
 It includes:
