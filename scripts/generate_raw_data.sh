@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Minimal TPC-H generator: stream each .tbl directly to S3 with dbgen progress.
+# TPC-H generator: stream each .tbl directly to S3 with dbgen progress.
 # Usage:
 #   ./tpch_to_s3.sh <SCALE_FACTOR> <S3_PREFIX>
 # Example:

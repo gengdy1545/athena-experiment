@@ -12,20 +12,15 @@ It includes:
 ### 1. Generate TPC-H Raw Data
 Ensure you have `git`, `make`, `gcc`, `pv`, and the `aws-cli` installed.
 
-Run `scripts/generate_raw_data.sh` script, passing your S3 staging bucket path as the first argument. 
-The script will generate data for multiple scale factors (e.g., SF-10, SF-30, SF-100) and place them in corresponding subfolders.
+Run `scripts/generate_raw_data.sh` script, passing scale factor and your S3 staging bucket path as arguments. 
+The script will generate data and place them in corresponding subfolders.
 
 ```bash
-# Usage: ./generate_data.sh <s3_staging_bucket_path>
-
+# Usage:
+#   ./tpch_to_s3.sh <SCALE_FACTOR> <S3_PREFIX>
 # Example:
-./scripts/generate_data.sh s3://your-bucket-name/staging-tpch-raw
+#   ./tpch_to_s3.sh 10 s3://my-bucket/tpch/sf-10/
 ```
-
-After this step, your S3 bucket should contain:
-* s3://your-bucket-name/staging-tpch-raw/sf-10/
-* s3://your-bucket-name/staging-tpch-raw/sf-30/
-* ...
 
 ### 2. Convert Data to Parquet (AWS Glue Job)
 Convert the raw pipe-delimited .tbl files into Parquet format, which is highly optimized for Athena
