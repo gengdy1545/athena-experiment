@@ -82,13 +82,13 @@ It strictly adheres to the timestamp offsets defined in the file, submitting que
 ### Configuration
 All benchmark settings are managed in `src/main/resources/config.properties`.
 
-|                  Property                   |                                Description                                 |                                         Example                                          |
-|:-------------------------------------------:|:--------------------------------------------------------------------------:|:----------------------------------------------------------------------------------------:|
-|                `aws.region`                 |                    Your AWS region. Must be lowercase.                     |                                       `us-east-2`                                        |
-|          `athena.output.s3.bucket`          |                 The S3 path to store Athena query results.                 |                           `s3://home-dongyang/athena-results/`                           |
-|           `athena.dollars.per.tb`           |            The billing price (in USD) per TB scanned by Athena.            |                                          `5.0`                                           |
-|              `query.file.path`              |                Local file path to the workload trace file.                 |                  `/home/gengdy/athena-experiment/workload/queries.txt`                   |
-|             `results.file.path`             |              Local file path to store the benchmark results.               |                   `/home/gengdy/athena-experiment/workload/result.txt`                   |
+|         Property          |                     Description                      |                        Example                        |
+|:-------------------------:|:----------------------------------------------------:|:-----------------------------------------------------:|
+|       `aws.region`        |         Your AWS region. Must be lowercase.          |                      `us-east-2`                      |
+| `athena.output.s3.bucket` |      The S3 path to store Athena query results.      |         `s3://home-dongyang/athena-results/`          |
+|  `athena.dollars.per.tb`  | The billing price (in USD) per TB scanned by Athena. |                         `5.0`                         |
+|     `query.file.path`     |     Local file path to the workload trace file.      | `/home/gengdy/athena-experiment/workload/queries.txt` |
+|    `results.file.path`    |   Local file path to store the benchmark results.    | `/home/gengdy/athena-experiment/workload/result.txt`  |
 
 ### Input Format (Workload File)
 
