@@ -7,6 +7,20 @@ It includes:
 1. **Data Setup:** Scripts to generate, convert, and catalog TPC-H data at various scale factors using S3, AWS Glue, and EC2.
 2. **Benchmark Tool:** A Java-based tool to replay query workloads against the cataloged data, simulating real-world concurrency and capturing detailed performance and cost metrics.
 
+The database used in this experiment are designed to mimic a realistic BI workload, consisting of five databases of varying sizes and workload patterns:
+
+| **DB**  | **Size (GB)** | **Workload Pattern** | **\#** | **SLAs**      |
+|---------|---------------|----------------------|--------|---------------|
+| $db_1$  | 10            | dashboard            | 720    | Rel/Imm=3/1   |
+| $db_2$  | 30            | manual ad-hoc        | 34     | Imm           |
+| $db_3$  | 30            | manual daily         | 87     | Imm/Rel=2/1   |
+| $db_4$  | 100           | off-peak             | 22     | BoE           |
+| $db_5$  | 100           | regular report       | 48     | Rel           |
+
+The detailed query load is shown in the figure below:
+
+![query stream](figures/query-stream.png)
+
 ## Part 1: TPC-H Data Setup Workflow
 
 ### 1. Generate TPC-H Raw Data
@@ -38,10 +52,9 @@ Convert the raw pipe-delimited .tbl files into Parquet format, which is highly o
     - **Number of workers**: `30`
 6. This script is parameterized. You must run the job multiple times—once for each scale factor you want to process.
 In the Job parameters section, provide the following arguments:
-    * `scale_factor`: e.g., `10`, `30`, `100`
-    * `target_s3_folder`: e.g., `tpch_0`
-    * `raw_data_base_path`: `s3://your-bucket-name/staging-tpch-raw/`
-    * `athena_base_path`: `s3://your-bucket-name/athena-data/`
+    * `scale_factor`: e.g., `10`
+    * `source_path`： e.g., `s3://your-bucket-name/staging-tpch-raw/sf-10/`
+    * `target_path`： e.g., `s3://your-bucket-name/athena-data/tpch_10/`
 7. Run the job for each scale factor.
 
 ### 3. Create Glue Database & Crawler

@@ -9,9 +9,8 @@ from pyspark.sql.types import StructType, StructField, StringType, LongType, Int
 args = getResolvedOptions(sys.argv, [
     'JOB_NAME',
     'scale_factor',       # e.g., "10", "30", "100"
-    'target_s3_folder',   # e.g., "tpch_0" (The target folder you want to write to)
-    'raw_data_base_path', # e.g., "s3://your-bucket/staging-tpch-raw/"
-    'athena_base_path'    # e.g., "s3://your-bucket/athena/"
+    'source_path',        # e.g. "s3://your-bucket/staging-tpch-raw/sf-10/"
+    'target_path',        # e.g. "s3://your-bucket/athena/tpch_0/"
 ])
 
 # --- 1. Define TPC-H Full Schemas ---
@@ -106,24 +105,22 @@ job.init(args['JOB_NAME'], args)
 scale_factor = args['scale_factor']
 sf = int(scale_factor)
 
-target_s3_folder = args['target_s3_folder']
+source_path = args['source_path']
+target_path = args['target_path']
+if not source_path.endswith('/'):
+    source_path += '/'
+if not target_path.endswith('/'):
+    target_path += '/'
 
-raw_data_base_path = args['raw_data_base_path']
-athena_base_path = args['athena_base_path']
-if not athena_base_path.endswith('/'):
-    athena_base_path += '/'
-if not raw_data_base_path.endswith('/'):
-    raw_data_base_path += '/'
-
-print(f"--- Starting conversion job (V4 - Fixed date types) ---")
-print(f"--- Reading source: {raw_data_base_path}sf-{scale_factor}/")
-print(f"--- Writing target: {athena_base_path}{target_s3_folder}/ (SF={sf}) ---")
+print(f"--- Starting conversion job ---")
+print(f"--- Reading source: {source_path} ---")
+print(f"--- Writing target: {target_path} ---")
 
 # --- 4. Loop Processing for Each Table ---
 for table_name, schema in schemas.items():
 
-    s3_input_path = f"{raw_data_base_path}sf-{sf}/{table_name}.tbl"
-    s3_output_path = f"{athena_base_path}{target_s3_folder}/{table_name}/"
+    s3_input_path = f"{source_path}{table_name}.tbl"
+    s3_output_path = f"{target_path}{table_name}/"
 
     print(f"Processing table: {table_name}")
 
