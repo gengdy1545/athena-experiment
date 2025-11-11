@@ -105,3 +105,11 @@ Each line represents a single query and must contain four columns, separated by 
 After running the benchmark, the results file specified by `results.file.path` will contain detailed metrics
 
 You can run `scripts/analyze.py` to parse the results file and generate a summary report.
+
+A set of experimental results is as follows:
+
+|     | total execution time (s) | total cost (USD) |
+|:---:|:------------------------:|:----------------:|
+| Imm |         618.506          |   2.1547252216   |
+| Rel |         1403.029         |   6.0794402251   |
+| BoE |         202.170          |   1.9222932520   |
